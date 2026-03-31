@@ -1,0 +1,152 @@
+name: Release (Linux Legacy)
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  ALLOW_MISSING_LICENSES: 1
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64 (glibc 2.28)
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            musl_target: x86_64-unknown-linux-musl
+            arch: x86_64
+            container: quay.io/pypa/manylinux_2_28_x86_64
+
+          - name: Linux ARM64 (glibc 2.28)
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            musl_target: aarch64-unknown-linux-musl
+            arch: aarch64
+            container: quay.io/pypa/manylinux_2_28_aarch64
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cargo-cache/registry
+            .cargo-cache/git
+          key: ${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ matrix.target }}-cargo-
+
+      - name: Build in manylinux container
+        uses: addnab/docker-run-action@v3
+        with:
+          image: ${{ matrix.container }}
+          options: -v ${{ github.workspace }}:/workspace -w /workspace -e CARGO_INCREMENTAL -e ALLOW_MISSING_LICENSES -e CARGO_HOME=/workspace/.cargo-home
+          run: |
+            set -euo pipefail
+
+            # ── Rust toolchain ───────────────────────────────
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
+              --default-toolchain 1.94.1 \
+              --target ${{ matrix.target }},${{ matrix.musl_target }}
+            source "$CARGO_HOME/env"
+
+            # Restore cached cargo registry into container's CARGO_HOME
+            if [ -d /workspace/.cargo-cache/registry ]; then
+              mkdir -p "$CARGO_HOME/registry"
+              cp -a /workspace/.cargo-cache/registry/* "$CARGO_HOME/registry/" 2>/dev/null || true
+            fi
+            if [ -d /workspace/.cargo-cache/git ]; then
+              mkdir -p "$CARGO_HOME/git"
+              cp -a /workspace/.cargo-cache/git/* "$CARGO_HOME/git/" 2>/dev/null || true
+            fi
+
+            # ── System dependencies ──────────────────────────
+            # AlmaLinux 8 / RHEL 8: enable CRB repo for -devel packages
+            dnf install -y 'dnf-command(config-manager)' || true
+            dnf config-manager --set-enabled powertools || \
+              dnf config-manager --set-enabled crb || true
+
+            dnf install -y \
+              gcc gcc-c++ clang lld llvm cmake make git curl jq \
+              alsa-lib-devel fontconfig-devel glib2-devel \
+              libva-devel wayland-devel libxcb-devel libxkbcommon-x11-devel \
+              openssl-devel libzstd-devel vulkan-loader sqlite-devel \
+              perl-interpreter perl-IPC-Cmd \
+              elfutils-libelf-devel
+
+            # ── WASI SDK (extensions support) ────────────────
+            WASI_ARCH=$(uname -m)
+            if [ "$WASI_ARCH" = "aarch64" ]; then WASI_ARCH="arm64"; fi
+            mkdir -p /workspace/target
+            WASI_SDK_URL="https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-${WASI_ARCH}-linux.tar.gz"
+            curl -L "$WASI_SDK_URL" | tar -xz -C /workspace/target
+            mv "/workspace/target/wasi-sdk-25.0-${WASI_ARCH}-linux" "/workspace/target/wasi-sdk" 2>/dev/null || true
+
+            # ── Build & bundle ────────────────────────────────
+            export CC=clang
+            export CXX=clang++
+            export ZED_BUNDLE=true
+
+            ./script/bundle-linux
+
+            # Save cargo registry for cache
+            mkdir -p /workspace/.cargo-cache
+            cp -a "$CARGO_HOME/registry" /workspace/.cargo-cache/ 2>/dev/null || true
+            cp -a "$CARGO_HOME/git" /workspace/.cargo-cache/ 2>/dev/null || true
+
+      - name: Upload editor artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zed-linux-${{ matrix.arch }}
+          retention-days: 7
+          if-no-files-found: error
+          path: target/release/zed-linux-${{ matrix.arch }}.tar.gz
+
+      - name: Upload remote server artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zed-remote-server-linux-${{ matrix.arch }}
+          retention-days: 7
+          if-no-files-found: error
+          path: target/zed-remote-server-linux-${{ matrix.arch }}.gz
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+
+      - name: Collect release files
+        run: |
+          mkdir -p release
+          find artifacts/ \( -name "*.tar.gz" -o -name "*.gz" \) -exec cp {} release/ \;
+          echo "## Release Artifacts" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          for f in release/*; do
+            echo "- \`$(basename "$f")\`" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
