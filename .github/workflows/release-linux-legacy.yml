@@ -87,7 +87,8 @@ jobs:
               libva-devel wayland-devel libxcb-devel libxkbcommon-x11-devel \
               openssl-devel libzstd-devel vulkan-loader sqlite-devel \
               perl-interpreter perl-IPC-Cmd \
-              elfutils-libelf-devel
+              elfutils-libelf-devel \
+              libcxx-devel libcxx-static
 
             # ── WASI SDK (extensions support) ────────────────
             WASI_ARCH=$(uname -m)
@@ -102,7 +103,9 @@ jobs:
 
             # ── Build & bundle ────────────────────────────────
             export CC=clang
-            export CXX=clang++
+            export CXX="clang++ -stdlib=libc++"
+            export CXXFLAGS="-stdlib=libc++"
+            export LDFLAGS="-stdlib=libc++"
             export ZED_BUNDLE=true
 
             ./script/bundle-linux
