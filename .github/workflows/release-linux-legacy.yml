@@ -97,6 +97,9 @@ jobs:
             curl -L "$WASI_SDK_URL" | tar -xz -C /workspace/target
             mv "/workspace/target/wasi-sdk-25.0-${WASI_ARCH}-linux" "/workspace/target/wasi-sdk" 2>/dev/null || true
 
+            # ── Git safe directory (container runs as root) ──
+            git config --global --add safe.directory /workspace
+
             # ── Build & bundle ────────────────────────────────
             export CC=clang
             export CXX=clang++
