@@ -5,7 +5,7 @@ use edit_prediction::{
     open_ai_compatible::{open_ai_compatible_api_token, open_ai_compatible_api_url},
 };
 use edit_prediction_ui::{get_available_providers, set_completion_provider};
-use gpui::{Entity, ScrollHandle, prelude::*};
+use gpui::{App, Entity, ScrollHandle, TaskExt, prelude::*};
 use language::language_settings::AllLanguageSettings;
 
 use settings::Settings as _;
@@ -14,6 +14,9 @@ use workspace::AppState;
 
 const OLLAMA_API_URL_PLACEHOLDER: &str = "http://localhost:11434";
 const OLLAMA_MODEL_PLACEHOLDER: &str = "qwen2.5-coder:3b-base";
+
+const OPEN_AI_COMPATIBLE_API_URL_PLACEHOLDER: &str = "http://localhost:8080/v1/completions";
+const OPEN_AI_COMPATIBLE_MODEL_PLACEHOLDER: &str = "qwen2.5-coder:3b-base";
 
 use crate::{
     SettingField, SettingItem, SettingsFieldMetadata, SettingsPageItem, SettingsWindow, USER,
@@ -185,9 +188,15 @@ fn render_api_key_provider(
     cx: &mut Context<SettingsWindow>,
 ) -> impl IntoElement {
     let weak_page = cx.weak_entity();
+    let credentials_provider = zed_credentials_provider::global(cx);
     _ = window.use_keyed_state(current_url(cx), cx, |_, cx| {
         let task = api_key_state.update(cx, |key_state, cx| {
-            key_state.load_if_needed(current_url(cx), |state| state, cx)
+            key_state.load_if_needed(
+                current_url(cx),
+                |state| state,
+                credentials_provider.clone(),
+                cx,
+            )
         });
         cx.spawn(async move |_, cx| {
             task.await.ok();
@@ -208,19 +217,27 @@ fn render_api_key_provider(
     });
 
     let write_key = move |api_key: Option<String>, cx: &mut App| {
+        let credentials_provider = zed_credentials_provider::global(cx);
         api_key_state
             .update(cx, |key_state, cx| {
                 let url = current_url(cx);
-                key_state.store(url, api_key, |key_state| key_state, cx)
+                key_state.store(
+                    url,
+                    api_key,
+                    |key_state| key_state,
+                    credentials_provider,
+                    cx,
+                )
             })
             .detach_and_log_err(cx);
     };
 
     let base_container = v_flex().id(title).min_w_0().pt_8().gap_1p5();
+
     let header = SettingsSectionHeader::new(title)
         .icon(icon)
         .no_padding(true);
-    let button_link_label = format!("{} dashboard", title);
+
     let description = match docs {
         ApiKeyDocs::Custom { message } => div().min_w_0().w_full().child(
             Label::new(message)
@@ -238,7 +255,7 @@ fn render_api_key_provider(
                     .color(Color::Muted),
             )
             .child(
-                ButtonLink::new(button_link_label, dashboard_url)
+                ButtonLink::new(format!("{title} dashboard"), dashboard_url)
                     .no_icon(true)
                     .label_size(LabelSize::Small)
                     .label_color(Color::Muted),
@@ -249,6 +266,7 @@ fn render_api_key_provider(
                     .color(Color::Muted),
             ),
     };
+
     let configured_card_label = if is_from_env_var {
         "API Key Set in Environment Variable"
     } else {
@@ -257,7 +275,7 @@ fn render_api_key_provider(
 
     let container = if has_key {
         base_container.child(header).child(
-            ConfiguredApiCard::new(configured_card_label)
+            ConfiguredApiCard::new(format!("{title}-reset-key"), configured_card_label)
                 .button_label("Reset Key")
                 .button_tab_index(0)
                 .disabled(is_from_env_var)
@@ -285,6 +303,7 @@ fn render_api_key_provider(
                         .w_full()
                         .min_w_0()
                         .max_w_1_2()
+                        .gap_0p5()
                         .child(Label::new("API Key"))
                         .child(description)
                         .when_some(env_var_name, |this, env_var_name| {
@@ -298,9 +317,10 @@ fn render_api_key_provider(
                         }),
                 )
                 .child(
-                    SettingsInputField::new()
+                    SettingsInputField::new(format!("{}-api-key-input", title))
                         .tab_index(0)
                         .with_placeholder("xxxxxxxxxxxxxxxxxxxx")
+                        .aria_label(format!("{} API Key", title))
                         .on_confirm(move |api_key, _window, cx| {
                             write_key(api_key.filter(|key| !key.is_empty()), cx);
                         }),
@@ -349,6 +369,7 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
             title: "API URL",
             description: "The base URL of your Ollama server.",
             field: Box::new(SettingField {
+                organization_override: None,
                 pick: |settings| {
                     settings
                         .project
@@ -360,7 +381,7 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
                         .api_url
                         .as_ref()
                 },
-                write: |settings, value| {
+                write: |settings, value, _app: &App| {
                     settings
                         .project
                         .all_languages
@@ -382,6 +403,7 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
             title: "Model",
             description: "The Ollama model to use for edit predictions.",
             field: Box::new(SettingField {
+                organization_override: None,
                 pick: |settings| {
                     settings
                         .project
@@ -393,7 +415,7 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
                         .model
                         .as_ref()
                 },
-                write: |settings, value| {
+                write: |settings, value, _app: &App| {
                     settings
                         .project
                         .all_languages
@@ -415,6 +437,7 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
             title: "Prompt Format",
             description: "The prompt format to use when requesting predictions. Set to Infer to have the format inferred based on the model name.",
             field: Box::new(SettingField {
+                organization_override: None,
                 pick: |settings| {
                     settings
                         .project
@@ -426,7 +449,7 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
                         .prompt_format
                         .as_ref()
                 },
-                write: |settings, value| {
+                write: |settings, value, _app: &App| {
                     settings
                         .project
                         .all_languages
@@ -445,6 +468,7 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
             title: "Max Output Tokens",
             description: "The maximum number of tokens to generate.",
             field: Box::new(SettingField {
+                organization_override: None,
                 pick: |settings| {
                     settings
                         .project
@@ -456,7 +480,7 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
                         .max_output_tokens
                         .as_ref()
                 },
-                write: |settings, value| {
+                write: |settings, value, _app: &App| {
                     settings
                         .project
                         .all_languages
@@ -480,6 +504,7 @@ fn open_ai_compatible_settings() -> Box<[SettingsPageItem]> {
             title: "API URL",
             description: "The URL of your OpenAI-compatible server's completions API.",
             field: Box::new(SettingField {
+                organization_override: None,
                 pick: |settings| {
                     settings
                         .project
@@ -491,7 +516,7 @@ fn open_ai_compatible_settings() -> Box<[SettingsPageItem]> {
                         .api_url
                         .as_ref()
                 },
-                write: |settings, value| {
+                write: |settings, value, _app: &App| {
                     settings
                         .project
                         .all_languages
@@ -504,7 +529,7 @@ fn open_ai_compatible_settings() -> Box<[SettingsPageItem]> {
                 json_path: Some("edit_predictions.open_ai_compatible_api.api_url"),
             }),
             metadata: Some(Box::new(SettingsFieldMetadata {
-                placeholder: Some(OLLAMA_API_URL_PLACEHOLDER),
+                placeholder: Some(OPEN_AI_COMPATIBLE_API_URL_PLACEHOLDER),
                 ..Default::default()
             })),
             files: USER,
@@ -513,6 +538,7 @@ fn open_ai_compatible_settings() -> Box<[SettingsPageItem]> {
             title: "Model",
             description: "The model string to pass to the OpenAI-compatible server.",
             field: Box::new(SettingField {
+                organization_override: None,
                 pick: |settings| {
                     settings
                         .project
@@ -524,7 +550,7 @@ fn open_ai_compatible_settings() -> Box<[SettingsPageItem]> {
                         .model
                         .as_ref()
                 },
-                write: |settings, value| {
+                write: |settings, value, _app: &App| {
                     settings
                         .project
                         .all_languages
@@ -537,7 +563,7 @@ fn open_ai_compatible_settings() -> Box<[SettingsPageItem]> {
                 json_path: Some("edit_predictions.open_ai_compatible_api.model"),
             }),
             metadata: Some(Box::new(SettingsFieldMetadata {
-                placeholder: Some(OLLAMA_MODEL_PLACEHOLDER),
+                placeholder: Some(OPEN_AI_COMPATIBLE_MODEL_PLACEHOLDER),
                 ..Default::default()
             })),
             files: USER,
@@ -546,6 +572,7 @@ fn open_ai_compatible_settings() -> Box<[SettingsPageItem]> {
             title: "Prompt Format",
             description: "The prompt format to use when requesting predictions. Set to Infer to have the format inferred based on the model name.",
             field: Box::new(SettingField {
+                organization_override: None,
                 pick: |settings| {
                     settings
                         .project
@@ -557,7 +584,7 @@ fn open_ai_compatible_settings() -> Box<[SettingsPageItem]> {
                         .prompt_format
                         .as_ref()
                 },
-                write: |settings, value| {
+                write: |settings, value, _app: &App| {
                     settings
                         .project
                         .all_languages
@@ -576,6 +603,7 @@ fn open_ai_compatible_settings() -> Box<[SettingsPageItem]> {
             title: "Max Output Tokens",
             description: "The maximum number of tokens to generate.",
             field: Box::new(SettingField {
+                organization_override: None,
                 pick: |settings| {
                     settings
                         .project
@@ -587,7 +615,7 @@ fn open_ai_compatible_settings() -> Box<[SettingsPageItem]> {
                         .max_output_tokens
                         .as_ref()
                 },
-                write: |settings, value| {
+                write: |settings, value, _app: &App| {
                     settings
                         .project
                         .all_languages
@@ -611,6 +639,7 @@ fn codestral_settings() -> Box<[SettingsPageItem]> {
             title: "API URL",
             description: "The API URL to use for Codestral.",
             field: Box::new(SettingField {
+                organization_override: None,
                 pick: |settings| {
                     settings
                         .project
@@ -622,7 +651,7 @@ fn codestral_settings() -> Box<[SettingsPageItem]> {
                         .api_url
                         .as_ref()
                 },
-                write: |settings, value| {
+                write: |settings, value, _app: &App| {
                     settings
                         .project
                         .all_languages
@@ -644,6 +673,7 @@ fn codestral_settings() -> Box<[SettingsPageItem]> {
             title: "Max Tokens",
             description: "The maximum number of tokens to generate.",
             field: Box::new(SettingField {
+                organization_override: None,
                 pick: |settings| {
                     settings
                         .project
@@ -655,7 +685,7 @@ fn codestral_settings() -> Box<[SettingsPageItem]> {
                         .max_tokens
                         .as_ref()
                 },
-                write: |settings, value| {
+                write: |settings, value, _app: &App| {
                     settings
                         .project
                         .all_languages
@@ -674,6 +704,7 @@ fn codestral_settings() -> Box<[SettingsPageItem]> {
             title: "Model",
             description: "The Codestral model id to use.",
             field: Box::new(SettingField {
+                organization_override: None,
                 pick: |settings| {
                     settings
                         .project
@@ -685,7 +716,7 @@ fn codestral_settings() -> Box<[SettingsPageItem]> {
                         .model
                         .as_ref()
                 },
-                write: |settings, value| {
+                write: |settings, value, _app: &App| {
                     settings
                         .project
                         .all_languages
