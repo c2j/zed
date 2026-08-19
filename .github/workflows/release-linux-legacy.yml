@@ -88,7 +88,7 @@ jobs:
               openssl-devel libzstd-devel vulkan-loader sqlite-devel \
               perl-interpreter perl-IPC-Cmd \
               elfutils-libelf-devel \
-              gcc-toolset-12 \
+              gcc-toolset-13 \
               pkgconfig
 
             # ── WASI SDK (extensions support) ────────────────
@@ -104,13 +104,16 @@ jobs:
 
             # ── Build & bundle ────────────────────────────────
             # webrtc-sys requires C++20 headers (<version>, <ranges>), which the
-            # container's default GCC 8.5 libstdc++ does not provide. gcc-toolset-12
+            # container's default GCC 8.5 libstdc++ does not provide. gcc-toolset-13
             # (built for EL8/glibc 2.28) supplies C++20; its libstdc++ must be on
             # LD_LIBRARY_PATH so bundle-linux's ldd picks the right copy to bundle.
-            # -fpermissive downgrades GCC 12's C++20 "changes meaning of 'Network'"
+            # GCC 13 is also the oldest EL8 toolchain whose libgcc provides
+            # __arm_tpidr2_save, referenced by Rust std's aarch64 SME support
+            # (linking with GCC 12 fails: "undefined symbol: __arm_tpidr2_save").
+            # -fpermissive downgrades GCC's C++20 "changes meaning of 'Network'"
             # error in the webrtc headers to a warning; clang only warns here too,
             # which is what webrtc-sys's -Wno-changes-meaning flags assume.
-            source /opt/rh/gcc-toolset-12/enable
+            source /opt/rh/gcc-toolset-13/enable
             export CC="$(command -v gcc)"
             export CXX="$(command -v g++)"
             export CXXFLAGS="-fpermissive"
