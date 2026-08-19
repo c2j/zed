@@ -88,7 +88,8 @@ jobs:
               openssl-devel libzstd-devel vulkan-loader sqlite-devel \
               perl-interpreter perl-IPC-Cmd \
               elfutils-libelf-devel \
-              gcc-toolset-12
+              gcc-toolset-12 \
+              pkgconfig
 
             # ── WASI SDK (extensions support) ────────────────
             WASI_ARCH=$(uname -m)
@@ -100,6 +101,14 @@ jobs:
 
             # ── Git safe directory (container runs as root) ──
             git config --global --add safe.directory /workspace
+
+            # ── musl cross toolchain (for remote_server) ─────
+            # manylinux_2_28 ships no musl-gcc (not in any EL8 repo), so fetch the
+            # self-contained musl.cc cross compiler; bundle-linux invokes it as
+            # `musl-gcc` for the x86_64/aarch64-unknown-linux-musl remote_server.
+            MUSL_ARCH=$(uname -m)
+            curl -L "https://musl.cc/${MUSL_ARCH}-linux-musl-cross.tgz" | tar -xz -C /opt
+            ln -sf "/opt/${MUSL_ARCH}-linux-musl-cross/bin/${MUSL_ARCH}-linux-musl-gcc" /usr/local/bin/musl-gcc
 
             # ── Build & bundle ────────────────────────────────
             # webrtc-sys requires C++20 headers (<version>, <ranges>), which the
