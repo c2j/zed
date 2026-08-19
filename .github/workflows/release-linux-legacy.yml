@@ -102,14 +102,6 @@ jobs:
             # ── Git safe directory (container runs as root) ──
             git config --global --add safe.directory /workspace
 
-            # ── musl cross toolchain (for remote_server) ─────
-            # manylinux_2_28 ships no musl-gcc (not in any EL8 repo), so fetch the
-            # self-contained musl.cc cross compiler; bundle-linux invokes it as
-            # `musl-gcc` for the x86_64/aarch64-unknown-linux-musl remote_server.
-            MUSL_ARCH=$(uname -m)
-            curl -L "https://musl.cc/${MUSL_ARCH}-linux-musl-cross.tgz" | tar -xz -C /opt
-            ln -sf "/opt/${MUSL_ARCH}-linux-musl-cross/bin/${MUSL_ARCH}-linux-musl-gcc" /usr/local/bin/musl-gcc
-
             # ── Build & bundle ────────────────────────────────
             # webrtc-sys requires C++20 headers (<version>, <ranges>), which the
             # container's default GCC 8.5 libstdc++ does not provide. gcc-toolset-12
@@ -119,6 +111,9 @@ jobs:
             export CC="$(command -v gcc)"
             export CXX="$(command -v g++)"
             export LD_LIBRARY_PATH="$(dirname "$(gcc -print-file-name=libstdc++.so)"):${LD_LIBRARY_PATH:-}"
+            # manylinux_2_28 has no musl toolchain (EPEL 8 lacks musl-gcc), so build
+            # remote_server for the same glibc target instead of static musl.
+            export REMOTE_SERVER_TARGET="${{ matrix.target }}"
             export ZED_BUNDLE=true
 
             ./script/bundle-linux
