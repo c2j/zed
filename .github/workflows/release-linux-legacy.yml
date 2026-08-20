@@ -88,7 +88,7 @@ jobs:
               openssl-devel libzstd-devel vulkan-loader sqlite-devel \
               perl-interpreter perl-IPC-Cmd \
               elfutils-libelf-devel \
-              gcc-toolset-13 \
+              gcc-toolset-14 \
               pkgconfig
 
             # ── WASI SDK (extensions support) ────────────────
@@ -104,19 +104,22 @@ jobs:
 
             # ── Build & bundle ────────────────────────────────
             # webrtc-sys requires C++20 headers (<version>, <ranges>), which the
-            # container's default GCC 8.5 libstdc++ does not provide. gcc-toolset-13
+            # container's default GCC 8.5 libstdc++ does not provide. gcc-toolset-14
             # (built for EL8/glibc 2.28) supplies C++20; its libstdc++ must be on
             # LD_LIBRARY_PATH so bundle-linux's ldd picks the right copy to bundle.
-            # GCC 13 is also the oldest EL8 toolchain whose libgcc provides
-            # __arm_tpidr2_save, referenced by Rust std's aarch64 SME support
-            # (linking with GCC 12 fails: "undefined symbol: __arm_tpidr2_save").
+            # GCC 14 is the first EL8 toolchain whose libgcc provides the ARM SME
+            # runtime (__arm_tpidr2_save etc.) referenced by libyuv's SME code in
+            # webrtc-sys on aarch64 (GCC 12/13 fail: "undefined symbol:
+            # __arm_tpidr2_save"). RUSTFLAGS pins the linker driver to this gcc so
+            # rustc does not fall back to the system `cc` (GCC 8.5, no SME runtime).
             # -fpermissive downgrades GCC's C++20 "changes meaning of 'Network'"
             # error in the webrtc headers to a warning; clang only warns here too,
             # which is what webrtc-sys's -Wno-changes-meaning flags assume.
-            source /opt/rh/gcc-toolset-13/enable
+            source /opt/rh/gcc-toolset-14/enable
             export CC="$(command -v gcc)"
             export CXX="$(command -v g++)"
             export CXXFLAGS="-fpermissive"
+            export RUSTFLAGS="-C linker=$(command -v gcc)"
             export LD_LIBRARY_PATH="$(dirname "$(gcc -print-file-name=libstdc++.so)"):${LD_LIBRARY_PATH:-}"
             # manylinux_2_28 has no musl toolchain (EPEL 8 lacks musl-gcc), so build
             # remote_server for the same glibc target instead of static musl.
