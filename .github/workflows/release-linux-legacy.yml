@@ -126,14 +126,14 @@ jobs:
             # on SME-capable hardware. x86_64 has no SME code and links nothing.
             if [ "$(uname -m)" = "aarch64" ]; then
               cat > /workspace/sme_runtime.c <<'EOF'
-#include <stdint.h>
-void __arm_tpidr2_save(void *saved_state) {
-  __asm__ volatile("mrs %0, tpidr2_el0" : "=r"(*((uint64_t *)saved_state)));
-}
-void __arm_tpidr2_restore(const void *saved_state) {
-  __asm__ volatile("msr tpidr2_el0, %0" :: "r"(*(const uint64_t *)saved_state));
-}
-EOF
+            #include <stdint.h>
+            void __arm_tpidr2_save(void *saved_state) {
+              __asm__ volatile("mrs %0, tpidr2_el0" : "=r"(*((uint64_t *)saved_state)));
+            }
+            void __arm_tpidr2_restore(const void *saved_state) {
+              __asm__ volatile("msr tpidr2_el0, %0" :: "r"(*(const uint64_t *)saved_state));
+            }
+            EOF
               gcc -c -march=armv9-a+sme -o /workspace/sme_runtime.o /workspace/sme_runtime.c
               export RUSTFLAGS="$RUSTFLAGS -C link-arg=/workspace/sme_runtime.o"
             fi
