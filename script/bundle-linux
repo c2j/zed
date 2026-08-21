@@ -164,6 +164,11 @@ find_libs() {
     ldd ${target_dir}/${target_triple}/release/zed |\
         cut -d' ' -f3 |\
         grep -v '\<\(libc.so\|libgcc_s.so\|libm.so\|libmvec.so\|libpthread.so\|libdl.so\|libasound.so\|librt.so\|libresolv.so\|libutil.so\|libnsl.so\|libanl.so\|libBrokenLocale.so\|libnss_\|libthread_db\)'
+    # The editor dlopens libwayland-client at runtime, so ldd does not list it.
+    # Bundle the build container's copy: running a binary built against newer
+    # wayland headers with a much older system libwayland (e.g. wayland 1.22
+    # build against Ubuntu 20.04/Kylin's 1.18) can crash on connect.
+    ldconfig -p 2>/dev/null | awk '/libwayland-client\.so\.0/ {print $NF; exit}'
 }
 
 mkdir -p "${zed_dir}/lib"
