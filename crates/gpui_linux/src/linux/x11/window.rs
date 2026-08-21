@@ -264,7 +264,7 @@ pub struct X11WindowState {
     x_root_window: xproto::Window,
     x_screen_index: usize,
     visual_id: u32,
-    pub(crate) counter_id: sync::Counter,
+    pub(crate) counter_id: Option<sync::Counter>,
     pub(crate) last_sync_counter: Option<sync::Int64>,
     bounds: Bounds<Pixels>,
     scale_factor: f32,
@@ -649,26 +649,33 @@ impl X11WindowState {
                 ),
             )?;
 
-            get_reply(
-                || "X11 sync protocol initialize failed.",
-                sync::initialize(xcb, 3, 1),
-            )?;
-            let sync_request_counter = xcb.generate_id()?;
-            check_reply(
-                || "X11 sync CreateCounter failed.",
-                sync::create_counter(xcb, sync_request_counter, sync::Int64 { lo: 0, hi: 0 }),
-            )?;
-
-            check_reply(
-                || "X11 ChangeProperty32 setting sync request counter failed.",
-                xcb.change_property32(
-                    xproto::PropMode::REPLACE,
-                    x_window,
-                    atoms._NET_WM_SYNC_REQUEST_COUNTER,
-                    xproto::AtomEnum::CARDINAL,
-                    &[sync_request_counter],
-                ),
-            )?;
+            // XSync (_NET_WM_SYNC_REQUEST) is optional: some X servers (e.g. minimal
+            // XWayland setups) do not implement it. Fall back to no frame
+            // synchronization when it is unavailable.
+            let sync_request_counter = (|| -> anyhow::Result<Option<sync::Counter>> {
+                get_reply(
+                    || "X11 sync protocol initialize failed.",
+                    sync::initialize(xcb, 3, 1),
+                )?;
+                let counter = xcb.generate_id()?;
+                check_reply(
+                    || "X11 sync CreateCounter failed.",
+                    sync::create_counter(xcb, counter, sync::Int64 { lo: 0, hi: 0 }),
+                )?;
+                check_reply(
+                    || "X11 ChangeProperty32 setting sync request counter failed.",
+                    xcb.change_property32(
+                        xproto::PropMode::REPLACE,
+                        x_window,
+                        atoms._NET_WM_SYNC_REQUEST_COUNTER,
+                        xproto::AtomEnum::CARDINAL,
+                        &[counter],
+                    ),
+                )?;
+                Ok(Some(counter))
+            })()
+            .log_err()
+            .flatten();
 
             let mut xi_event_mask = xinput::XIEventMask::MOTION
                 | xinput::XIEventMask::BUTTON_PRESS
@@ -818,7 +825,8 @@ impl X11WindowState {
             check_reply(
                 || "X11 DestroyWindow failed while cleaning it up after setup failure.",
                 xcb.destroy_window(x_window),
-            )?;
+            )
+            .log_err();
             xcb_flush(xcb);
         }
 
@@ -1259,10 +1267,12 @@ impl X11WindowStatePtr {
             state.renderer.update_drawable_size(gpu_size);
             let result = (is_resize, state.content_size(), state.scale_factor);
             if let Some(value) = state.last_sync_counter.take() {
-                check_reply(
-                    || "X11 sync SetCounter failed.",
-                    sync::set_counter(&self.xcb, state.counter_id, value),
-                )?;
+                if let Some(counter_id) = state.counter_id {
+                    check_reply(
+                        || "X11 sync SetCounter failed.",
+                        sync::set_counter(&self.xcb, counter_id, value),
+                    )?;
+                }
             }
             result
         };
