@@ -155,10 +155,15 @@ cp "${target_dir}/${target_triple}/release/cli" "${zed_dir}/bin/zed"
 # Libs
 # Bundle libstdc++ so older supported systems can run binaries built with our
 # toolchain even when their system libstdc++.so.6 lacks required GLIBCXX symbols.
+# Never bundle glibc's own libraries: their GLIBC_PRIVATE symbol versions are
+# unstable across glibc releases, so a bundled librt/libresolv from the build
+# container fails to load against the target system's libc (e.g. "undefined
+# symbol: __pthread_attr_copy, version GLIBC_PRIVATE"). The system's own copies
+# must be used at runtime.
 find_libs() {
     ldd ${target_dir}/${target_triple}/release/zed |\
         cut -d' ' -f3 |\
-        grep -v '\<\(libc.so\|libgcc_s.so\|libm.so\|libpthread.so\|libdl.so\|libasound.so\)'
+        grep -v '\<\(libc.so\|libgcc_s.so\|libm.so\|libmvec.so\|libpthread.so\|libdl.so\|libasound.so\|librt.so\|libresolv.so\|libutil.so\|libnsl.so\|libanl.so\|libBrokenLocale.so\|libnss_\|libthread_db\)'
 }
 
 mkdir -p "${zed_dir}/lib"
